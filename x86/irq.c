@@ -38,6 +38,24 @@ static int irq__add_routing(u32 gsi, u32 type, u32 irqchip, u32 pin)
 	return 0;
 }
 
+static int irq__add_msi_routing(u32 gsi, u32 type, u64 addr, u32 data)
+{
+	int r = irq__allocate_routing_entry();
+	if (r)
+		return r;
+
+	irq_routing->entries[irq_routing->nr++] =
+		(struct kvm_irq_routing_entry) {
+			.gsi = gsi,
+			.type = type,
+			.u.msi.address_lo = (__u32)addr,
+			.u.msi.address_hi = addr >> 32,
+			.u.msi.data = data,
+		};
+
+	return 0;
+}
+
 static int irq__init_kernel(struct kvm *kvm)
 {
 	int i, r;
@@ -72,6 +90,24 @@ static int irq__init_kernel(struct kvm *kvm)
 
 static int irq__init_split(struct kvm *kvm)
 {
+	int i, r;
+
+	/* Hook first 8 GSIs to master IRQCHIP */
+	for (i = 0; i < 8; i++)
+		irq__add_msi_routing(i, KVM_IRQ_ROUTING_MSI, 0, 0);
+
+	/* Hook next 8 GSIs to slave IRQCHIP */
+	for (i = 8; i < 16; i++)
+		irq__add_msi_routing(i, KVM_IRQ_ROUTING_MSI, 0, 0);
+
+	r = ioctl(kvm->vm_fd, KVM_SET_GSI_ROUTING, irq_routing);
+	if (r) {
+		free(irq_routing);
+		return errno;
+	}
+
+	next_gsi = i;
+
 	return kvm_pic_init(kvm);
 }
 
